@@ -2,6 +2,15 @@
 set -e  # exit on error
 
 # -------------------------------
+#  Check if running as root/sudo
+# -------------------------------
+if [ "$EUID" -eq 0 ]; then
+    echo "[!] This script should not be run as root or with sudo."
+    echo "[!] Please run as a regular user."
+    exit 1
+fi
+
+# -------------------------------
 #  Update system
 # -------------------------------
 echo "[*] Updating system..."
@@ -18,11 +27,22 @@ sudo pacman -S --noconfirm proton-vpn-gtk-app zsh starship flatpak --needed base
 # -------------------------------
 if ! command -v paru &> /dev/null; then
     echo "[*] Installing paru..."
-    git clone https://aur.archlinux.org/paru.git /tmp/paru
-    pushd /tmp/paru
-    makepkg -si --noconfirm
-    popd
-    rm -rf /tmp/paru
+    PARU_DIR="/tmp/paru"
+    if git clone https://aur.archlinux.org/paru.git "$PARU_DIR"; then
+        if pushd "$PARU_DIR" && makepkg -si --noconfirm; then
+            popd
+            rm -rf "$PARU_DIR"
+            echo "[*] paru installed successfully."
+        else
+            echo "[!] Failed to build paru. Cleaning up..."
+            popd 2>/dev/null || true
+            rm -rf "$PARU_DIR"
+            exit 1
+        fi
+    else
+        echo "[!] Failed to clone paru repository."
+        exit 1
+    fi
 else
     echo "[*] paru already installed."
 fi
@@ -104,7 +124,10 @@ if [ -f "$ZSHRC" ]; then
     cp "$ZSHRC" "${ZSHRC}.backup.$(date +%s)"
 fi
 
-cat > "$ZSHRC" <<'EOF'
+# Check if .zshrc already contains our oh-my-zsh setup
+if ! grep -q "export ZSH=\"\$HOME/.oh-my-zsh\"" "$ZSHRC" 2>/dev/null; then
+    # Create new .zshrc with oh-my-zsh setup
+    cat > "$ZSHRC" <<'EOF'
 export ZSH="$HOME/.oh-my-zsh"
 
 ZSH_THEME="robbyrussell"
@@ -122,6 +145,10 @@ source $ZSH/oh-my-zsh.sh
 # Starship prompt
 eval "$(starship init zsh)"
 EOF
+    echo "[*] Created new .zshrc with oh-my-zsh configuration."
+else
+    echo "[*] .zshrc already contains oh-my-zsh configuration."
+fi
 
 # -------------------------------
 #  Change default shell to zsh
@@ -130,5 +157,32 @@ if [ "$SHELL" != "$(which zsh)" ]; then
     echo "[*] Changing default shell to zsh..."
     chsh -s "$(which zsh)"
 fi
+
+# -------------------------------
+#  Install Node.js and nvm
+# -------------------------------
+echo "[*] Installing nvm..."
+if [ ! -d "$HOME/.nvm" ]; then
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+    # Load nvm immediately
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+    echo "[*] nvm installed successfully."
+else
+    echo "[*] nvm already installed."
+    # Load nvm if not already loaded
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+fi
+
+echo "[*] Installing Node.js 22..."
+nvm install 22
+nvm use 22
+nvm alias default 22
+
+echo "[*] Node.js $(node --version) installed successfully."
 
 echo "[✓] Setup complete! Restart your terminal or log out/in to start using Zsh with Starship."
